@@ -1,18 +1,48 @@
 import { useEffect, useState, useRef } from "react";
 import StarRating from "./StarRating";
-import { useMovies } from "./useMovies";
-import { useLocalStorage } from "./useLocalStorage";
-import { useKey } from "./useKey";
+
 const average = (arr) =>
   arr.reduce((acc, cur, i, arr) => acc + cur / arr.length, 0);
 
 const KEY = "67fb4547";
 
 export default function App() {
+  const [movies, setMovies] = useState([]);
   const [query, setQuery] = useState("harsh");
-  const { movies, isLoading, error } = useMovies(query, handleCloseMovie);
+  // const [watched, setWatched] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
   const [selectedId, setSelectedId] = useState(null);
-  const [watched, setWatched] = useLocalStorage([], "watched");
+  const [watched, setWatched] = useState(function () {
+    let stored = JSON.parse(localStorage.getItem("watched")) || [];
+    return stored;
+  });
+  async function fetchMovies(controller) {
+    try {
+      setIsLoading(true);
+      setError("");
+
+      const res = await fetch(
+        `http://www.omdbapi.com/?apikey=${KEY}&s=${query}`,
+        { signal: controller.signal }
+      );
+      if (!res.ok) {
+        throw new Error("Something went wrong with fetching movies");
+      }
+      const data = await res.json();
+      if (data.Response === "False") {
+        throw new Error("movies not found");
+      }
+      handleCloseMovie();
+      setMovies(data.Search);
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setError(err.message);
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }
   function handleSelectMovie(id) {
     setSelectedId((prevId) => (prevId === id ? null : id));
   }
@@ -27,6 +57,27 @@ export default function App() {
       WatchedMovies.filter((movie) => movie?.imdbID !== id)
     );
   }
+  useEffect(() => {
+    localStorage.setItem("watched", JSON.stringify(watched));
+  }, [watched]);
+  useEffect(() => {
+    //Ensure that the AbortController is being created before making the fetch request each time
+    //and passed to the fetchMovies function.
+    const controller = new AbortController();
+    // immediate function invocation
+    (async () => {
+      if (query.length < 3) {
+        setMovies([]);
+        setError("");
+        return;
+      }
+      await fetchMovies(controller);
+    })();
+    return function cleanup() {
+      controller.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
 
   return (
     <>
@@ -101,7 +152,7 @@ function NavBar({ children }) {
 function Logo() {
   return (
     <div className="logo">
-      <span role="img">🎬</span>
+      <span role="img">🍿</span>
       <h1>PicturePulse</h1>
     </div>
   );
@@ -109,14 +160,19 @@ function Logo() {
 
 function Search({ query, setQuery }) {
   const inputEle = useRef(null);
-  useKey("enter", function () {
-    if (document.activeElement === inputEle.current) return;
-    inputEle.current.focus();
-    setQuery("");
-  });
-
   useEffect(function () {
     inputEle.current.focus();
+    const callback = function (e) {
+      if (document.activeElement === inputEle.current) return;
+
+      if (e.code === "Enter") {
+        inputEle.current.focus();
+        setQuery("");
+      }
+    };
+    document.addEventListener("keydown", callback);
+
+    return () => document.removeEventListener("keydown", callback);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -237,6 +293,7 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
 
       setMovie(data);
     } catch (err) {
+      console.log(err.message);
       setError(err.message);
     } finally {
       setIsLoading(false);
@@ -293,9 +350,21 @@ function MovieDetails({ selectedId, onCloseMovie, onAddWatched, watched }) {
     },
     [title]
   );
-  // useKey
-  useKey("escape", onCloseMovie);
 
+  useEffect(
+    function () {
+      let callback = function (e) {
+        if (e.code === "Escape") {
+          onCloseMovie();
+          // console.log("harsh");
+        }
+      };
+      document.addEventListener("keydown", callback);
+
+      return () => document.removeEventListener("keydown", callback);
+    },
+    [onCloseMovie]
+  );
   return (
     <div className="details">
       {error && <ErrorMessage message={error} />}
